@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Al-Qur'an Digital - @agustriian</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+    <style>
+        .font-quran {
+            font-family: 'Amiri', serif;
+            line-height: 2.4;
+        }
+        input[type='range']::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #10b981;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        
+        // Mocking Lucide icons for browser compatibility
+        const Icon = ({ name, className }) => {
+            return <i data-lucide={name} className={className}></i>;
+        };
+
+        const BASE_URL = 'https://api.quran.com/api/v4';
+
+        const App = () => {
+            const [view, setView] = useState('list'); 
+            const [chapters, setChapters] = useState([]);
+            const [reciters, setReciters] = useState([]);
+            const [selectedReciter, setSelectedReciter] = useState(12);
+            const [currentChapter, setCurrentChapter] = useState(null);
+            const [verses, setVerses] = useState([]);
+            const [juzData, setJuzData] = useState([]);
+            const [audioUrl, setAudioUrl] = useState('');
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [currentTime, setCurrentTime] = useState(0);
+            const [duration, setDuration] = useState(0);
+            const [loading, setLoading] = useState(true);
+            const [loadingVerses, setLoadingVerses] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [selectedJuz, setSelectedJuz] = useState('all');
+
+            const audioRef = useRef(null);
+
+            // Re-render icons after every view change
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            });
+
+            useEffect(() => {
+                const fetchData = async () => {
+                    try {
+                        const [chapterRes, reciterRes, juzRes] = await Promise.all([
+                            fetch(`${BASE_URL}/chapters?language=id`),
+                            fetch(`${BASE_URL}/resources/recitations?language=id`),
+                            fetch(`${BASE_URL}/juzs`)
+                        ]);
+                        const chapterData = await chapterRes.json();
+                        const reciterData = await reciterRes.json();
+                        const juzMapData = await juzRes.json();
+
+                        const uniqueReciters = [];
+                        const seenNames = new Set();
+                        reciterData.recitations.forEach(r => {
+                            const cleanName = r.reciter_name.trim();
+                            if (!seenNames.has(cleanName)) {
+                                seenNames.add(cleanName);
+                                uniqueReciters.push(r);
+                            }
+                        });
+
+                        const sortedReciters = [...uniqueReciters].sort((a, b) => {
+                            if (a.reciter_name.toLowerCase().includes("khalifa")) return -1;
+                            return a.reciter_name.localeCompare(b.reciter_name);
+                        });
+
+                        setChapters(chapterData.chapters);
+                        setReciters(sortedReciters);
+                        setJuzData(juzMapData.juzs);
+                        setLoading(false);
+                    } catch (error) {
+                        console.error('Fetch error:', error);
+                        setLoading(false);
+                    }
+                };
+                fetchData();
+            }, []);
+
+            useEffect(() => {
+                if (currentChapter) {
+                    fetchChapterContent();
+                }
+            }, [currentChapter, selectedReciter]);
+
+            const fetchChapterContent = async () => {
+                setLoadingVerses(true);
+                try {
+                    const verseRes = await fetch(`${BASE_URL}/verses/by_chapter/${currentChapter.id}?language=id&words=false&translations=33&fields=text_uthmani&per_page=all`);
+                    const verseData = await verseRes.json();
+                    setVerses(verseData.verses);
+
+                    const audioRes = await fetch(`${BASE_URL}/chapter_recitations/${selectedReciter}/${currentChapter.id}`);
+                    const audioData = await audioRes.json();
+                    if (audioData.audio_file) {
+                        setAudioUrl(audioData.audio_file.audio_url);
+                    }
+                    setLoadingVerses(false);
+                } catch (error) {
+                    console.error("Verse fetch error:", error);
+                    setLoadingVerses(false);
+                }
+            };
+
+            const selectSurah = (chapter) => {
+                setCurrentChapter(chapter);
+                setView('reading');
+                setIsPlaying(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const togglePlay = () => {
+                if (!audioRef.current) return;
+                if (isPlaying) {
+                    audioRef.current.pause();
+                } else {
+                    audioRef.current.play();
+                }
+                setIsPlaying(!isPlaying);
+            };
+
+            const formatTime = (time) => {
+                if (isNaN(time)) return "00:00";
+                const mins = Math.floor(time / 60);
+                const secs = Math.floor(time % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            };
+
+            const filteredChapters = useMemo(() => {
+                let result = chapters;
+                if (selectedJuz !== 'all') {
+                    const juzInfo = juzData.find(j => j.juz_number === parseInt(selectedJuz));
+                    if (juzInfo) {
+                        const surahInJuz = Object.keys(juzInfo.verse_mapping).map(Number);
+                        result = result.filter(c => surahInJuz.includes(c.id));
+                    }
+                }
+                if (searchQuery) {
+                    result = result.filter(c => 
+                        c.name_simple.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        c.id.toString() === searchQuery
+                    );
+                }
+                return result;
+            }, [chapters, searchQuery, selectedJuz, juzData]);
+
+            if (loading) {
+                return (
+                    <div className="flex flex-col items-center justify-center h-screen bg-emerald-50 text-emerald-800">
+                        <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <h2 className="text-lg font-bold uppercase">Menyiapkan Al-Qur'an @agustriian</h2>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex flex-col h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans">
+                    <header className="bg-emerald-700 text-white p-3 md:p-4 shadow-md z-30 shrink-0">
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 w-full md:w-auto">
+                                {view === 'reading' && (
+                                    <button onClick={() => setView('list')} className="p-1.5 hover:bg-white/10 rounded-full">
+                                        <Icon name="chevron-left" className="w-6 h-6" />
+                                    </button>
+                                )}
+                                <div className="flex flex-col">
+                                    <h1 className="text-lg md:text-xl font-bold flex items-center gap-2">
+                                        <Icon name="book" className="w-5 h-5 text-emerald-300" />
+                                        Al-Qur'an Digital
+                                    </h1>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2 w-full md:flex-1 md:justify-end">
+                                {view === 'list' && (
+                                    <input 
+                                        type="text" 
+                                        placeholder="Cari Surah..." 
+                                        className="w-full max-w-sm px-4 py-1.5 rounded-full bg-emerald-800/50 border border-emerald-600 focus:bg-white focus:text-slate-900 outline-none text-sm"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                    />
+                                )}
+                                <select 
+                                    className="bg-emerald-800/40 text-xs p-2 rounded-full border border-emerald-600 outline-none"
+                                    value={selectedReciter}
+                                    onChange={(e) => setSelectedReciter(parseInt(e.target.value))}
+                                >
+                                    {reciters.map(r => (
+                                        <option key={r.id} value={r.id} className="text-slate-900">{r.reciter_name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 overflow-y-auto bg-slate-50">
+                        <div className="max-w-4xl mx-auto p-4 md:p-8">
+                            {view === 'list' ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pb-24">
+                                    {filteredChapters.map((chapter) => (
+                                        <button key={chapter.id} onClick={() => selectSurah(chapter)} className="flex items-center p-4 rounded-xl bg-white border border-slate-200 hover:shadow-lg transition-all text-left">
+                                            <div className="w-10 h-10 flex items-center justify-center bg-emerald-50 text-emerald-700 rounded-lg mr-3 font-bold">{chapter.id}</div>
+                                            <div className="flex-1">
+                                                <h3 className="font-bold text-slate-800 text-sm md:text-base">{chapter.name_simple}</h3>
+                                                <p className="text-[10px] text-slate-400 uppercase font-bold">{chapter.translated_name.name}</p>
+                                            </div>
+                                            <div className="text-right"><p className="text-lg font-quran text-emerald-800" dir="rtl">{chapter.name_arabic}</p></div>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="bg-white rounded-2xl shadow-sm border p-5 md:p-12 mb-32">
+                                    {loadingVerses ? <div className="text-center py-20">Memuat Ayat...</div> : (
+                                        <div className="space-y-10">
+                                            {verses.map((verse, idx) => (
+                                                <div key={verse.id} className="border-b border-slate-50 pb-6">
+                                                    <p className="text-2xl md:text-4xl font-quran text-right mb-4" dir="rtl">
+                                                        {verse.text_uthmani}
+                                                        <span className="inline-flex items-center justify-center w-10 h-10 ml-3 text-sm border rounded-full font-sans text-emerald-700">{idx + 1}</span>
+                                                    </p>
+                                                    <p className="text-slate-600 italic text-sm md:text-lg">{(verse.translations?.[0]?.text || '').replace(/<[^>]*>/g, '')}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </main>
+
+                    {currentChapter && (
+                        <footer className="fixed bottom-0 w-full bg-white/95 backdrop-blur-md border-t p-4 shadow-lg flex flex-col items-center">
+                            <div className="flex items-center gap-6 mb-2">
+                                <button onClick={togglePlay} className="w-12 h-12 bg-emerald-600 text-white rounded-full flex items-center justify-center">
+                                    <Icon name={isPlaying ? "pause" : "play"} className="w-6 h-6" />
+                                </button>
+                            </div>
+                            <div className="w-full max-w-md flex items-center gap-3">
+                                <span className="text-[10px] tabular-nums">{formatTime(currentTime)}</span>
+                                <input type="range" className="flex-1 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer" min="0" max={duration || 1} value={currentTime} onChange={(e) => {
+                                    const time = parseFloat(e.target.value);
+                                    audioRef.current.currentTime = time;
+                                    setCurrentTime(time);
+                                }} />
+                                <span className="text-[10px] tabular-nums">{formatTime(duration)}</span>
+                            </div>
+                            <audio ref={audioRef} src={audioUrl} onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} autoPlay />
+                        </footer>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
